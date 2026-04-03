@@ -97,10 +97,7 @@ if page == "上传文献":
 
     st.divider()
     st.subheader("已入库文献")
-    st.caption(
-        "点击条目左侧可展开/折叠详情；摘要与正文预览见展开区。"
-        "优先展示摘要，无摘要时显示正文开头预览。"
-    )
+    st.caption("展示标题、作者、解析得到的年份与主要内容（优先摘要，无摘要时显示正文开头预览）。")
     try:
         papers = requests.get(f"{API}/api/papers/", timeout=5).json()
     except Exception:
@@ -109,28 +106,11 @@ if page == "上传文献":
     if not papers:
         st.info("知识库暂无文献，请先上传。")
     else:
-        st.caption(f"共 **{len(papers)}** 篇文献（默认折叠，便于快速浏览）。")
-        expand_all = st.checkbox(
-            "一次性展开全部文献详情",
-            value=False,
-            key="expand_all_papers",
-        )
         for p in papers:
             pid = p["id"]
             main = _paper_main_content(p)
-            raw_title = (p.get("title") or "（无标题）").strip()
-            title_1line = raw_title if len(raw_title) <= 72 else raw_title[:69] + "…"
-            _auth_short = (p.get("authors") or "").strip() or "—"
-            if len(_auth_short) > 36:
-                _auth_short = _auth_short[:33] + "…"
-            expand_label = f"📑 {title_1line}　·　{_paper_year_label(p)}　·　{_auth_short}"
-            # 删除确认中自动展开该条；勾选「展开全部」时全部展开
-            _open = (
-                st.session_state.pending_delete_id == pid or expand_all
-            )
-
-            with st.expander(expand_label, expanded=_open):
-                st.markdown(f"##### {raw_title}")
+            with st.container(border=True):
+                st.markdown(f"##### {p.get('title') or '（无标题）'}")
                 a1, a2, a3 = st.columns((2.2, 2.2, 1.0))
                 with a1:
                     _auth = (p.get("authors") or "").strip() or "—"
@@ -140,11 +120,12 @@ if page == "上传文献":
                 with a3:
                     _ut = (p.get("upload_time") or "")[:10]
                     st.caption(f"上传 {_ut or '—'}")
-                st.markdown("**主要内容**")
-                if main:
-                    st.write(main)
-                else:
-                    st.caption("暂无摘要与正文预览（较早入库记录可能没有预览字段，可重新上传或后续扩展解析）")
+                with st.expander("查看主要内容", expanded=False):
+                    st.markdown("**主要内容**")
+                    if main:
+                        st.write(main)
+                    else:
+                        st.caption("暂无摘要与正文预览（较早入库记录可能没有预览字段，可重新上传或后续扩展解析）")
 
                 with st.expander("编辑标题（问答引用名）", expanded=False):
                     st.caption(f"文献 ID：`{pid}`")
@@ -170,6 +151,7 @@ if page == "上传文献":
                             else:
                                 st.error(f"更新失败：{pr.text}")
 
+                st.divider()
                 if st.session_state.pending_delete_id == pid:
                     st.warning("确认从知识库删除该文献？将同时移除向量索引与本地 PDF，且不可恢复。")
                     d1, d2 = st.columns(2)
