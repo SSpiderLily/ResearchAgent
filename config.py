@@ -21,6 +21,9 @@ CHUNK_OVERLAP = int(os.getenv("CHUNK_OVERLAP", "50"))
 
 RAG_TOP_K = int(os.getenv("RAG_TOP_K", "5"))
 
+# 多轮问答：传给 LLM 的历史消息条数上限（含 user/assistant，各算一条）
+CHAT_HISTORY_MAX_MESSAGES = int(os.getenv("CHAT_HISTORY_MAX_MESSAGES", "20"))
+
 BACKEND_HOST = os.getenv("BACKEND_HOST", "127.0.0.1")
 BACKEND_PORT = int(os.getenv("BACKEND_PORT", "8000"))
 BACKEND_URL = f"http://{BACKEND_HOST}:{BACKEND_PORT}"

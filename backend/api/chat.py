@@ -1,15 +1,23 @@
 from __future__ import annotations
 
+from typing import Literal
+
 from fastapi import APIRouter
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from backend.core.rag import ask
 
 router = APIRouter(prefix="/api", tags=["chat"])
 
 
+class ChatMessageItem(BaseModel):
+    role: Literal["user", "assistant"]
+    content: str
+
+
 class ChatRequest(BaseModel):
     question: str
+    history: list[ChatMessageItem] = Field(default_factory=list)
 
 
 class ReferenceItem(BaseModel):
@@ -26,7 +34,8 @@ class ChatResponse(BaseModel):
 
 @router.post("/chat", response_model=ChatResponse)
 async def chat(req: ChatRequest):
-    result = ask(req.question)
+    hist = [m.model_dump() for m in req.history]
+    result = ask(req.question, history=hist)
     return ChatResponse(
         answer=result.answer,
         references=[

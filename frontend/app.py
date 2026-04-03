@@ -108,6 +108,11 @@ elif page == "智能问答":
                         st.caption(ref["snippet"])
 
     if prompt := st.chat_input("输入你的问题，例如：对比论文A与B在训练策略上的差异"):
+        history_payload = [
+            {"role": m["role"], "content": m["content"]}
+            for m in st.session_state.messages
+        ]
+
         st.session_state.messages.append({"role": "user", "content": prompt})
         with st.chat_message("user"):
             st.markdown(prompt)
@@ -117,7 +122,7 @@ elif page == "智能问答":
                 try:
                     resp = requests.post(
                         f"{API}/api/chat",
-                        json={"question": prompt},
+                        json={"question": prompt, "history": history_payload},
                         timeout=120,
                     )
                     data = resp.json()

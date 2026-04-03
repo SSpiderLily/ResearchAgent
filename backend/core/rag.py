@@ -6,7 +6,7 @@ from backend.core.embedder import embed_query
 from backend.core.llm import chat_completion
 from backend.storage.database import get_paper
 from backend.storage.vectorstore import query_chunks
-from config import RAG_TOP_K
+from config import CHAT_HISTORY_MAX_MESSAGES, RAG_TOP_K
 
 _SYSTEM_PROMPT = (
     "你是一位专业的科研助手（Research Copilot）。"
@@ -15,6 +15,8 @@ _SYSTEM_PROMPT = (
     "1. 回答应准确、简洁，优先使用中文。\n"
     "2. 必须在回答中标注引用来源，格式为 [论文标题, 第X页]。\n"
     "3. 如果检索内容不足以回答问题，请如实说明。\n"
+    "4. 若存在历史对话，请结合追问与指代（如“那篇论文”“同上”）理解意图；"
+    "回答仍须优先依据本轮提供的检索片段。\n"
 )
 
 
@@ -32,7 +34,30 @@ class RAGResult:
     references: list[Reference] = field(default_factory=list)
 
 
-def ask(question: str, top_k: int = RAG_TOP_K) -> RAGResult:
+def _normalize_history(
+    history: list[dict] | None,
+    max_messages: int = CHAT_HISTORY_MAX_MESSAGES,
+) -> list[dict]:
+    if not history:
+        return []
+    out: list[dict] = []
+    for m in history:
+        role = m.get("role")
+        content = (m.get("content") or "").strip()
+        if role not in ("user", "assistant") or not content:
+            continue
+        out.append({"role": role, "content": content})
+    if len(out) > max_messages:
+        out = out[-max_messages:]
+    return out
+
+
+def ask(
+    question: str,
+    history: list[dict] | None = None,
+    top_k: int = RAG_TOP_K,
+) -> RAGResult:
+    trimmed = _normalize_history(history)
     query_emb = embed_query(question)
     results = query_chunks(query_emb, top_k=top_k)
 
@@ -40,9 +65,22 @@ def ask(question: str, top_k: int = RAG_TOP_K) -> RAGResult:
     metadatas = results.get("metadatas", [[]])[0]
 
     if not documents:
-        return RAGResult(
-            answer="当前知识库中没有找到与您问题相关的论文内容，请先上传相关文献。"
+        if not trimmed:
+            return RAGResult(
+                answer="当前知识库中没有找到与您问题相关的论文内容，请先上传相关文献。"
+            )
+        follow_up = (
+            "（本轮知识库未检索到与当前问题直接相关的片段。"
+            "请结合上文对话作答；若无法从对话中确定事实，请如实说明。）\n\n"
+            f"{question}"
         )
+        messages = [
+            {"role": "system", "content": _SYSTEM_PROMPT},
+            *trimmed,
+            {"role": "user", "content": follow_up},
+        ]
+        answer = chat_completion(messages)
+        return RAGResult(answer=answer, references=[])
 
     context_parts: list[str] = []
     references: list[Reference] = []
@@ -73,15 +111,15 @@ def ask(question: str, top_k: int = RAG_TOP_K) -> RAGResult:
 
     context_block = "\n\n---\n\n".join(context_parts)
 
+    user_turn = (
+        f"以下是从知识库中检索到的论文片段：\n\n{context_block}\n\n"
+        f"请根据以上内容回答：{question}"
+    )
+
     messages = [
         {"role": "system", "content": _SYSTEM_PROMPT},
-        {
-            "role": "user",
-            "content": (
-                f"以下是从知识库中检索到的论文片段：\n\n{context_block}\n\n"
-                f"请根据以上内容回答：{question}"
-            ),
-        },
+        *trimmed,
+        {"role": "user", "content": user_turn},
     ]
 
     answer = chat_completion(messages)
