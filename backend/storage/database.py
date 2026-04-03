@@ -63,3 +63,15 @@ def delete_paper(paper_id: str) -> bool:
     with _get_conn() as conn:
         cur = conn.execute("DELETE FROM papers WHERE id = ?", (paper_id,))
     return cur.rowcount > 0
+
+
+def update_paper_title(paper_id: str, title: str) -> bool:
+    title = title.strip()
+    if not title:
+        return False
+    with _get_conn() as conn:
+        cur = conn.execute(
+            "UPDATE papers SET title = ? WHERE id = ?",
+            (title, paper_id),
+        )
+    return cur.rowcount > 0
