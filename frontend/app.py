@@ -28,9 +28,27 @@ def _api_ok() -> bool:
         return False
 
 
+def _paper_main_content(p: dict) -> str:
+    abstract = (p.get("abstract") or "").strip()
+    if abstract:
+        return abstract
+    preview = (p.get("content_preview") or "").strip()
+    return preview
+
+
+def _paper_year_label(p: dict) -> str:
+    y = p.get("year")
+    if y is None:
+        return "未识别"
+    return str(y)
+
+
 # ── upload page ──────────────────────────────────────────────────────
 
 if page == "上传文献":
+    if "pending_delete_id" not in st.session_state:
+        st.session_state.pending_delete_id = None
+
     st.title("📄 上传文献")
     st.markdown(
         "上传 PDF 论文，系统将自动解析并存入知识库。"
@@ -56,22 +74,33 @@ if page == "上传文献":
             if resp.status_code == 200:
                 data = resp.json()
                 st.success("论文解析完成！")
-                col1, col2 = st.columns(2)
-                with col1:
-                    st.metric("标题", data.get("title", ""))
-                    st.metric("页数", data.get("page_count", 0))
-                with col2:
-                    st.metric("作者", data.get("authors", "") or "未识别")
-                    st.metric("文本块数", data.get("chunk_count", 0))
-
-                if data.get("abstract"):
-                    st.subheader("摘要")
-                    st.write(data["abstract"])
+                u1, u2 = st.columns(2)
+                with u1:
+                    st.markdown(
+                        f"**标题**\n\n{(data.get('title') or '—')}"
+                    )
+                    st.markdown(
+                        f"**作者**\n\n{(data.get('authors') or '').strip() or '未识别'}"
+                    )
+                with u2:
+                    st.markdown(f"**页数**\n\n{data.get('page_count', 0)}")
+                    yr = data.get("year")
+                    st.markdown(
+                        f"**年份**\n\n{yr if yr is not None else '未识别'}"
+                    )
+                st.caption(f"文本块数：{data.get('chunk_count', 0)}")
+                st.markdown("**主要内容**")
+                _mc = (data.get("abstract") or "").strip() or (data.get("content_preview") or "").strip()
+                st.write(_mc or "（暂无摘要且未能生成正文预览）")
             else:
                 st.error(f"解析失败：{resp.text}")
 
     st.divider()
     st.subheader("已入库文献")
+    st.caption(
+        "点击条目左侧可展开/折叠详情；摘要与正文预览见展开区。"
+        "优先展示摘要，无摘要时显示正文开头预览。"
+    )
     try:
         papers = requests.get(f"{API}/api/papers/", timeout=5).json()
     except Exception:
@@ -80,35 +109,87 @@ if page == "上传文献":
     if not papers:
         st.info("知识库暂无文献，请先上传。")
     else:
+        st.caption(f"共 **{len(papers)}** 篇文献（默认折叠，便于快速浏览）。")
+        expand_all = st.checkbox(
+            "一次性展开全部文献详情",
+            value=False,
+            key="expand_all_papers",
+        )
         for p in papers:
             pid = p["id"]
-            with st.expander(f"📑 {p['title']}"):
-                st.caption(f"文献 ID：`{pid}`（向量索引按此关联，修改标题无需重建索引）")
-                new_title = st.text_input(
-                    "文献标题（用于列表与问答引用）",
-                    value=p["title"],
-                    key=f"paper_title_{pid}",
-                )
-                if st.button("保存标题", key=f"save_title_{pid}"):
-                    nt = (new_title or "").strip()
-                    if not nt:
-                        st.warning("标题不能为空。")
-                    else:
-                        pr = requests.patch(
-                            f"{API}/api/papers/{pid}",
-                            json={"title": nt},
-                            timeout=10,
-                        )
-                        if pr.status_code == 200:
-                            st.success("标题已更新。")
-                            st.rerun()
+            main = _paper_main_content(p)
+            raw_title = (p.get("title") or "（无标题）").strip()
+            title_1line = raw_title if len(raw_title) <= 72 else raw_title[:69] + "…"
+            _auth_short = (p.get("authors") or "").strip() or "—"
+            if len(_auth_short) > 36:
+                _auth_short = _auth_short[:33] + "…"
+            expand_label = f"📑 {title_1line}　·　{_paper_year_label(p)}　·　{_auth_short}"
+            # 删除确认中自动展开该条；勾选「展开全部」时全部展开
+            _open = (
+                st.session_state.pending_delete_id == pid or expand_all
+            )
+
+            with st.expander(expand_label, expanded=_open):
+                st.markdown(f"##### {raw_title}")
+                a1, a2, a3 = st.columns((2.2, 2.2, 1.0))
+                with a1:
+                    _auth = (p.get("authors") or "").strip() or "—"
+                    st.markdown(f"**作者**\n\n{_auth}")
+                with a2:
+                    st.markdown(f"**年份**\n\n{_paper_year_label(p)}")
+                with a3:
+                    _ut = (p.get("upload_time") or "")[:10]
+                    st.caption(f"上传 {_ut or '—'}")
+                st.markdown("**主要内容**")
+                if main:
+                    st.write(main)
+                else:
+                    st.caption("暂无摘要与正文预览（较早入库记录可能没有预览字段，可重新上传或后续扩展解析）")
+
+                with st.expander("编辑标题（问答引用名）", expanded=False):
+                    st.caption(f"文献 ID：`{pid}`")
+                    new_title = st.text_input(
+                        "文献标题（用于列表与问答引用）",
+                        value=p["title"],
+                        key=f"paper_title_{pid}",
+                        label_visibility="collapsed",
+                    )
+                    if st.button("保存标题", key=f"save_title_{pid}"):
+                        nt = (new_title or "").strip()
+                        if not nt:
+                            st.warning("标题不能为空。")
                         else:
-                            st.error(f"更新失败：{pr.text}")
-                st.write(f"**作者：** {p.get('authors') or '未识别'}")
-                st.write(f"**页数：** {p.get('page_count', '?')}")
-                st.write(f"**上传时间：** {p.get('upload_time', '')}")
-                if p.get("abstract"):
-                    st.caption(p["abstract"][:300])
+                            pr = requests.patch(
+                                f"{API}/api/papers/{pid}",
+                                json={"title": nt},
+                                timeout=10,
+                            )
+                            if pr.status_code == 200:
+                                st.success("标题已更新。")
+                                st.rerun()
+                            else:
+                                st.error(f"更新失败：{pr.text}")
+
+                if st.session_state.pending_delete_id == pid:
+                    st.warning("确认从知识库删除该文献？将同时移除向量索引与本地 PDF，且不可恢复。")
+                    d1, d2 = st.columns(2)
+                    with d1:
+                        if st.button("确认删除", key=f"confirm_del_{pid}", type="primary"):
+                            dr = requests.delete(f"{API}/api/papers/{pid}", timeout=30)
+                            if dr.status_code == 200:
+                                st.session_state.pending_delete_id = None
+                                st.success("已删除。")
+                                st.rerun()
+                            else:
+                                st.error(f"删除失败：{dr.text}")
+                    with d2:
+                        if st.button("取消", key=f"cancel_del_{pid}"):
+                            st.session_state.pending_delete_id = None
+                            st.rerun()
+                else:
+                    if st.button("🗑️ 删除该文献", key=f"del_{pid}"):
+                        st.session_state.pending_delete_id = pid
+                        st.rerun()
 
 
 # ── chat page ────────────────────────────────────────────────────────

@@ -21,8 +21,9 @@
 | 项目               | 说明                                                                           |
 | ------------------ | ------------------------------------------------------------------------------ |
 | **文件**           | `frontend/app.py`                                                              |
-| **职责**           | PDF 上传、已入库文献列表、跨论文智能问答与引用来源展示                         |
-| **调用的后端接口** | `GET /health`、`POST /api/papers/upload`、`GET /api/papers/`、`POST /api/chat`（含多轮 `history`） |
+| **职责**           | PDF 上传、已入库文献折叠列表（标题/作者/年份/主要内容预览）、编辑标题、删除文献、跨论文智能问答与引用来源展示                         |
+| **调用的后端接口** | `GET /health`、`POST /api/papers/upload`、`GET /api/papers/`、`PATCH /api/papers/{paper_id}`（编辑标题）、`DELETE /api/papers/{paper_id}`（删除文献）、`POST /api/chat`（含多轮 `history`） |
+| 相关能力         | 文献列表默认 `expander` 折叠查看；支持“展开全部”；支持删除的二次确认；编辑标题后无需重建向量索引 |
 | **输入**           | 用户上传的 PDF、聊天问题                                                       |
 | **输出**           | Streamlit 页面渲染                                                             |
 | **外部依赖**       | `streamlit`、`requests`；需后端服务可用                                        |
@@ -35,7 +36,7 @@
 | ------------ | ----------------------------------------------------------------- |
 | **文件**     | `backend/main.py`、`backend/api/papers.py`、`backend/api/chat.py` |
 | **职责**     | HTTP 路由、CORS、应用启动时初始化数据库；将请求转发到业务逻辑     |
-| **子路由**   | `papers`：文献上传 / 列表 / 详情 / 删除；`chat`：问答             |
+| **子路由**   | `papers`：文献上传 / 列表 / 详情 / 删除（删除时同步移除 SQLite 记录、Chroma 向量索引与本地 PDF 文件）；`chat`：问答 |
 | **输入**     | HTTP 请求（JSON / multipart）                                     |
 | **输出**     | JSON 响应                                                         |
 | **外部依赖** | `fastapi`、`uvicorn`                                              |
@@ -47,9 +48,9 @@
 | 项目         | 说明                                                            |
 | ------------ | --------------------------------------------------------------- |
 | **文件**     | `backend/core/parser.py`                                        |
-| **职责**     | 使用 PyMuPDF 读取 PDF，按页抽取文本；启发式提取标题、作者、摘要 |
+| **职责**     | 使用 PyMuPDF 读取 PDF，按页抽取文本；启发式提取标题、作者、摘要；同时抽取 `year`（发表年份猜测）与 `content_preview`（主要内容预览） |
 | **输入**     | PDF 文件路径                                                    |
-| **输出**     | `ParsedPaper`（标题、作者、摘要、全文、分页文本、页数）         |
+| **输出**     | `ParsedPaper`（标题、作者、摘要、全文、分页文本、页数、`year`、`content_preview`） |
 | **外部依赖** | `PyMuPDF`（`fitz`）                                             |
 
 ---
@@ -120,8 +121,8 @@
 | 项目         | 说明                                                                  |
 | ------------ | --------------------------------------------------------------------- |
 | **文件**     | `backend/storage/database.py`                                         |
-| **职责**     | SQLite 存储论文元数据（标题、作者、摘要、文件路径、页数、上传时间等） |
-| **主要操作** | 初始化表、`insert_paper`、`get_paper`、`list_papers`、`delete_paper`  |
+| **职责**     | SQLite 存储论文元数据（标题、作者、摘要、`year`、`content_preview`、文件路径、页数、上传时间等） |
+| **主要操作** | 初始化表（含兼容迁移）、`insert_paper`、`get_paper`、`list_papers`、`update_paper_title`、`delete_paper`  |
 | **输入**     | 结构化论文字段                                                        |
 | **输出**     | 查询结果字典或列表                                                    |
 | **外部依赖** | 标准库 `sqlite3`；路径 `SQLITE_PATH`                                  |
@@ -133,8 +134,8 @@
 ### 文献入库
 
 1. 前端上传 PDF → `POST /api/papers/upload`
-2. 保存文件至 `UPLOAD_DIR`
-3. `parse_pdf` → `insert_paper`（SQLite）
+2. 保存文件至 `UPLOAD_DIR`（磁盘文件名与原始上传名脱钩，使用 UUID）
+3. `parse_pdf` → `insert_paper`（SQLite；同时写入 `year`、`content_preview`）
 4. `chunk_pages` → `embed_texts` → `add_chunks`（Chroma）
 
 ### 智能问答

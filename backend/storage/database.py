@@ -14,6 +14,14 @@ def _get_conn() -> sqlite3.Connection:
     return conn
 
 
+def _migrate_papers_schema(conn: sqlite3.Connection) -> None:
+    cols = {row[1] for row in conn.execute("PRAGMA table_info(papers)").fetchall()}
+    if "year" not in cols:
+        conn.execute("ALTER TABLE papers ADD COLUMN year INTEGER")
+    if "content_preview" not in cols:
+        conn.execute("ALTER TABLE papers ADD COLUMN content_preview TEXT DEFAULT ''")
+
+
 def init_db() -> None:
     with _get_conn() as conn:
         conn.execute("""
@@ -27,6 +35,7 @@ def init_db() -> None:
                 upload_time TEXT NOT NULL
             )
         """)
+        _migrate_papers_schema(conn)
 
 
 def insert_paper(
@@ -35,14 +44,27 @@ def insert_paper(
     abstract: str,
     file_path: str,
     page_count: int,
+    year: int | None = None,
+    content_preview: str = "",
 ) -> str:
     paper_id = uuid.uuid4().hex[:12]
     now = datetime.now().isoformat()
     with _get_conn() as conn:
         conn.execute(
-            "INSERT INTO papers (id, title, authors, abstract, file_path, page_count, upload_time) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?)",
-            (paper_id, title, authors, abstract, file_path, page_count, now),
+            "INSERT INTO papers (id, title, authors, abstract, file_path, page_count, "
+            "upload_time, year, content_preview) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (
+                paper_id,
+                title,
+                authors,
+                abstract,
+                file_path,
+                page_count,
+                now,
+                year,
+                content_preview,
+            ),
         )
     return paper_id
 
