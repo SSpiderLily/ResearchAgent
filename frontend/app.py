@@ -32,7 +32,11 @@ def _api_ok() -> bool:
 
 if page == "上传文献":
     st.title("📄 上传文献")
-    st.markdown("上传 PDF 论文，系统将自动解析并存入知识库。")
+    st.markdown(
+        "上传 PDF 论文，系统将自动解析并存入知识库。"
+        "解析出的标题可能不准或与文件名不一致，请在下方 **已入库文献** 中更正标题，"
+        "智能问答中的引用将使用该标题。"
+    )
 
     if not _api_ok():
         st.error("后端服务未启动，请先运行 FastAPI 后端。")
@@ -77,7 +81,29 @@ if page == "上传文献":
         st.info("知识库暂无文献，请先上传。")
     else:
         for p in papers:
+            pid = p["id"]
             with st.expander(f"📑 {p['title']}"):
+                st.caption(f"文献 ID：`{pid}`（向量索引按此关联，修改标题无需重建索引）")
+                new_title = st.text_input(
+                    "文献标题（用于列表与问答引用）",
+                    value=p["title"],
+                    key=f"paper_title_{pid}",
+                )
+                if st.button("保存标题", key=f"save_title_{pid}"):
+                    nt = (new_title or "").strip()
+                    if not nt:
+                        st.warning("标题不能为空。")
+                    else:
+                        pr = requests.patch(
+                            f"{API}/api/papers/{pid}",
+                            json={"title": nt},
+                            timeout=10,
+                        )
+                        if pr.status_code == 200:
+                            st.success("标题已更新。")
+                            st.rerun()
+                        else:
+                            st.error(f"更新失败：{pr.text}")
                 st.write(f"**作者：** {p.get('authors') or '未识别'}")
                 st.write(f"**页数：** {p.get('page_count', '?')}")
                 st.write(f"**上传时间：** {p.get('upload_time', '')}")
